@@ -1,0 +1,1045 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Mini Dashboard</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:       #000;
+    --bg-alpha: 0.72;
+    --card:     #1c1c1e;
+    --border:   #2c2c2e;
+    --text:     #fff;
+    --muted:    #636366;
+    --green:    #1db954;
+    --purple:   #bf5af2;
+    --red:      #ff453a;
+    --radius:   12px;
+  }
+
+  body {
+    background: var(--bg);
+    background-size: cover;
+    background-position: center;
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif;
+    font-size: 13px;
+    height: 100vh;
+    display: flex; flex-direction: column;
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+    user-select: none;
+    position: relative;
+  }
+
+  /* bg image overlay — opacity driven by --bg-alpha */
+  body.has-bg::before {
+    content: '';
+    position: fixed; inset: 0; z-index: 0;
+    background: var(--bg);
+    opacity: var(--bg-alpha, 0.72);
+    pointer-events: none;
+  }
+  body > * { position: relative; z-index: 1; }
+
+  /* ─── Floating controls (always on top, transparent) ─── */
+  .float-controls {
+    position: fixed; top: 0; left: 0; right: 0;
+    height: 38px; z-index: 500;
+    display: flex; align-items: center; justify-content: flex-end;
+    padding: 0 10px; gap: 7px;
+    -webkit-app-region: drag; /* drag from anywhere in the strip */
+  }
+  .float-btn {
+    -webkit-app-region: no-drag;
+    width: 26px; height: 26px;
+    border: 1px solid rgba(255,255,255,.28);
+    background: rgba(0,0,0,.38);
+    color: rgba(255,255,255,.7);
+    cursor: pointer; font-size: 11px;
+    border-radius: 7px;
+    display: flex; align-items: center; justify-content: center;
+    transition: border-color .15s, background .15s, color .15s;
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+  }
+  .float-btn:hover {
+    border-color: rgba(255,255,255,.6);
+    background: rgba(0,0,0,.65);
+    color: #fff;
+  }
+  .float-btn svg { pointer-events: none; }
+
+  /* ─── Rate limit banner ─── */
+  .rate-banner {
+    flex-shrink: 0; display: none;
+    align-items: center; justify-content: space-between;
+    padding: 10px 14px;
+    background: rgba(255,69,58,.12);
+    border-bottom: 1px solid rgba(255,69,58,.3);
+    margin-top: 38px; /* clear the floating controls */
+  }
+  .rate-banner.visible { display: flex; }
+  .rl-label { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--red); }
+  .rl-sub   { font-size: 10px; color: rgba(255,69,58,.65); margin-top: 1px; }
+  .rl-count { font-size: 20px; font-weight: 700; color: var(--red); font-variant-numeric: tabular-nums; letter-spacing: -.02em; }
+
+  /* ─── Scroll ─── */
+  .scroll { flex: 1; overflow-y: auto; scrollbar-width: none; padding-top: 38px; }
+  .scroll::-webkit-scrollbar { display: none; }
+
+  /* ─── Section label ─── */
+  .sec-label {
+    display: flex; align-items: center; gap: 7px;
+    padding: 14px 16px 8px;
+    font-size: 9px; font-weight: 800; letter-spacing: .2em; text-transform: uppercase;
+  }
+  .sec-label.spotify { color: var(--green); }
+  .sec-label.claude  { color: var(--purple); }
+
+  @keyframes pulse {
+    0%,100% { opacity:1; transform:scale(1); }
+    50%      { opacity:.5; transform:scale(.85); }
+  }
+  .live-dot { width:6px; height:6px; border-radius:50%; background:var(--green); animation:pulse 1.8s ease-in-out infinite; }
+
+  /* ─── Now playing ─── */
+  .np-card { display:flex; align-items:center; gap:14px; padding:0 16px 14px; }
+  .np-art {
+    width:80px; height:80px; border-radius:10px; overflow:hidden;
+    background:var(--card); flex-shrink:0; position:relative;
+  }
+  .np-art img { width:100%; height:100%; object-fit:cover; display:block; }
+  .np-art-ph { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-size:28px; color:var(--muted); }
+  .np-meta { flex:1; min-width:0; }
+  .np-name { font-size:16px; font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; line-height:1.2; margin-bottom:4px; }
+  .np-artist { font-size:13px; color:rgba(235,235,240,.6); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+
+  .progress-wrap { padding:0 16px 4px; }
+  .progress-track { height:3px; background:#2c2c2e; border-radius:3px; overflow:hidden; margin-bottom:6px; }
+  .progress-fill  { height:100%; background:var(--green); border-radius:3px; transition:width 1s linear; }
+  .progress-times { display:flex; justify-content:space-between; font-size:10px; color:var(--muted); font-variant-numeric:tabular-nums; }
+
+  .controls { display:flex; align-items:center; padding:10px 16px 14px; }
+  .ctrl {
+    -webkit-app-region:no-drag; flex:1;
+    border:none; background:none; cursor:pointer;
+    color:rgba(235,235,240,.85);
+    display:flex; align-items:center; justify-content:center;
+    padding:8px 0; border-radius:10px;
+    transition:color .15s, background .15s;
+  }
+  .ctrl:hover { background:rgba(255,255,255,.07); color:#fff; }
+  .ctrl.play  { flex:1.4; color:#fff; }
+
+  .divider { height:1px; background:rgba(255,255,255,.06); margin:4px 0; }
+
+  /* ─── Spotify split layout ─── */
+  .sp-layout { display:flex; align-items:stretch; }
+  .sp-left   { width:50%; min-width:0; }
+  .sp-right  { width:50%; min-width:0; border-left:1px solid rgba(255,255,255,.06); display:flex; flex-direction:column; overflow:hidden; }
+
+  .sp-left .np-card   { padding:0 10px 10px; gap:10px; }
+  .sp-left .np-art    { width:64px; height:64px; }
+  .sp-left .np-name   { font-size:13px; }
+  .sp-left .np-artist { font-size:11px; }
+  .sp-left .progress-wrap { padding:0 10px 4px; }
+  .sp-left .controls  { padding:6px 10px 10px; }
+
+  .sp-right .recent-head { padding:8px 10px 4px; }
+  .sp-right .recent-item { padding:6px 10px; }
+
+  .recent-head { padding:10px 16px 6px; font-size:9px; font-weight:700; letter-spacing:.18em; text-transform:uppercase; color:var(--muted); }
+  .recent-item { display:flex; align-items:center; gap:8px; padding:7px 16px; border-bottom:1px solid rgba(255,255,255,.04); }
+  .recent-item:last-child { border-bottom:none; }
+  .recent-num  { font-size:11px; color:var(--muted); width:12px; text-align:right; flex-shrink:0; }
+  .recent-info { flex:1; min-width:0; }
+  .recent-name   { font-size:12px; font-weight:500; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .recent-artist { font-size:10px; color:rgba(235,235,240,.45); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+
+  /* ─── Spotify tab switching ─── */
+  .sp-tabs { display:flex; border-bottom:1px solid rgba(255,255,255,.06); flex-shrink:0; }
+  .sp-tab {
+    flex:1; height:28px; border:none; background:none;
+    color:var(--muted); font-size:10px; font-weight:600;
+    letter-spacing:.06em; text-transform:uppercase;
+    cursor:pointer; border-bottom:2px solid transparent; margin-bottom:-1px;
+    transition:color .15s, border-color .15s;
+    -webkit-app-region:no-drag;
+  }
+  .sp-tab:hover { color:var(--text); }
+  .sp-tab.active { color:var(--green); border-bottom-color:var(--green); }
+  .sp-tab-body { flex:1; overflow-y:auto; }
+  .sp-empty-msg { padding:16px 10px; font-size:11px; color:var(--muted); text-align:center; line-height:1.6; }
+
+  /* ─── Spotify connect in settings ─── */
+  .sp-client-row { padding:8px 16px 10px; }
+  .sp-client-label { font-size:11px; color:var(--muted); margin-bottom:5px; }
+  .sp-client-input {
+    width:100%; height:32px; box-sizing:border-box;
+    background:var(--card); border:1px solid var(--border);
+    border-radius:8px; color:var(--text);
+    font-size:12px; font-family:'SF Mono','Menlo',monospace; padding:0 10px;
+  }
+  .sp-client-input:focus { outline:none; border-color:rgba(255,255,255,.3); }
+  .sp-client-hint { font-size:10px; color:var(--muted); margin-top:5px; line-height:1.5; }
+  .sp-connect-row { display:flex; align-items:center; justify-content:space-between; padding:10px 16px 14px; }
+  .sp-connect-info { flex:1; min-width:0; }
+  .sp-connect-label { font-size:13px; color:var(--text); }
+  .sp-connect-status { font-size:11px; color:var(--muted); margin-top:2px; }
+  .sp-connect-btn {
+    height:30px; padding:0 14px;
+    border:1px solid var(--border); background:var(--card); color:var(--text);
+    border-radius:8px; cursor:pointer; font-size:12px; font-family:inherit;
+    flex-shrink:0; margin-left:10px;
+    transition:background .15s, border-color .15s, color .15s;
+  }
+  .sp-connect-btn:hover:not(:disabled) { background:rgba(255,255,255,.1); }
+  .sp-connect-btn:disabled { opacity:.5; cursor:default; }
+  .sp-connect-btn.connected { border-color:rgba(29,185,84,.35); color:var(--green); }
+  .sp-connect-btn.connected:hover { color:var(--red); border-color:rgba(255,69,58,.4); }
+
+  .empty { padding:24px 16px; display:flex; align-items:center; gap:12px; color:var(--muted); }
+  .empty svg { opacity:.25; flex-shrink:0; }
+
+  /* ─── Claude stats ─── */
+  .stats-row { display:grid; grid-template-columns:1fr 1fr; gap:8px; padding:0 16px 8px; }
+  .stat { background:var(--card); border:1px solid var(--border); border-radius:var(--radius); padding:12px 14px; }
+  .stat-val { font-size:28px; font-weight:700; line-height:1; margin-bottom:4px; font-variant-numeric:tabular-nums; color:var(--purple); }
+  .stat-lbl { font-size:10px; color:var(--muted); }
+
+  .token-block { margin:0 16px 8px; background:var(--card); border:1px solid var(--border); border-radius:var(--radius); overflow:hidden; }
+  .token-row { display:flex; align-items:center; justify-content:space-between; padding:9px 14px; border-bottom:1px solid var(--border); }
+  .token-row:last-child { border-bottom:none; }
+  .token-lbl { font-size:10px; color:var(--muted); }
+  .token-vals { display:flex; gap:14px; align-items:baseline; }
+  .tv { font-size:13px; font-weight:600; font-variant-numeric:tabular-nums; color:var(--purple); }
+  .tv.dim { color:var(--purple-dim); font-size:12px; }
+  .tp { font-size:9px; color:var(--muted); opacity:0.6; text-transform:uppercase; letter-spacing:.08em; margin-left:2px; }
+
+  .week-row { margin:0 16px 8px; background:var(--card); border:1px solid var(--border); border-radius:var(--radius); padding:11px 14px; display:flex; align-items:baseline; gap:6px; }
+  .week-val { font-size:22px; font-weight:700; color:var(--purple); font-variant-numeric:tabular-nums; line-height:1; }
+  .week-lbl { font-size:11px; color:var(--muted); }
+  .week-rng { font-size:10px; color:var(--muted); opacity:0.5; margin-left:auto; }
+
+  .reset-row { margin:0 16px 16px; padding:9px 14px; background:var(--reset-tint); border:1px solid var(--reset-border); border-radius:var(--radius); display:flex; align-items:center; gap:8px; font-size:11px; color:var(--reset-text); }
+  .reset-row svg { opacity:.7; flex-shrink:0; }
+
+
+  /* ══════════════════════════════════════════
+     SETTINGS PANEL
+  ══════════════════════════════════════════ */
+  .settings-view {
+    display: none; flex-direction: column;
+    position: fixed; inset: 38px 0 0; /* sit below floating controls */
+    background: var(--bg); z-index: 50;
+    overflow-y: auto; scrollbar-width: none;
+  }
+  .settings-view::-webkit-scrollbar { display: none; }
+  .settings-view.open { display: flex; }
+
+  .settings-section {
+    padding: 14px 16px 4px;
+    font-size: 9px; font-weight: 800;
+    letter-spacing: .2em; text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  .setting-row {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 16px;
+    border-bottom: 1px solid rgba(255,255,255,.05);
+  }
+  .setting-row:last-of-type { border-bottom: none; }
+  .setting-name { font-size: 13px; color: var(--text); }
+
+  .color-control { display: flex; align-items: center; gap: 8px; }
+
+  /* Native color picker — style the swatch */
+  input[type="color"] {
+    -webkit-appearance: none;
+    width: 32px; height: 32px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 2px; cursor: pointer;
+    background: none;
+  }
+  input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; border-radius: 6px; }
+  input[type="color"]::-webkit-color-swatch { border: none; border-radius: 6px; }
+
+  .hex-input {
+    width: 76px; height: 32px;
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 8px; color: var(--text);
+    font-size: 12px; font-family: 'SF Mono', 'Menlo', monospace;
+    text-align: center; padding: 0 8px;
+    transition: border-color .15s;
+  }
+  .hex-input:focus { outline: none; border-color: rgba(255,255,255,.3); }
+
+  .hex-stack { display: flex; flex-direction: column; gap: 5px; }
+
+  .alpha-row { display: flex; align-items: center; gap: 7px; }
+  .alpha-slider {
+    flex: 1; height: 3px; cursor: pointer; border-radius: 2px;
+    -webkit-appearance: none; appearance: none;
+    background: rgba(255,255,255,.18);
+  }
+  .alpha-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 13px; height: 13px; border-radius: 50%;
+    background: #fff; cursor: pointer;
+    border: 1px solid rgba(0,0,0,.25);
+    box-shadow: 0 1px 3px rgba(0,0,0,.5);
+  }
+  .alpha-val {
+    font-size: 10px; color: var(--muted);
+    width: 30px; text-align: right; flex-shrink: 0;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Image row */
+  .image-row { padding: 10px 16px 14px; }
+  .img-preview {
+    width: 100%; height: 80px;
+    border-radius: 10px; overflow: hidden;
+    background: var(--card); border: 1px solid var(--border);
+    margin-bottom: 10px;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--muted); font-size: 11px;
+    position: relative;
+  }
+  .img-preview img { width:100%; height:100%; object-fit:cover; display:block; }
+  .img-buttons { display: flex; gap: 8px; }
+  .img-btn {
+    flex: 1; height: 34px;
+    border: 1px solid var(--border);
+    background: var(--card); color: var(--text);
+    border-radius: 8px; cursor: pointer;
+    font-size: 12px; font-family: inherit;
+    transition: background .15s;
+  }
+  .img-btn:hover { background: rgba(255,255,255,.1); }
+  .img-btn.danger { color: var(--red); border-color: rgba(255,69,58,.3); }
+  .img-btn.danger:hover { background: rgba(255,69,58,.1); }
+
+  .settings-footer { padding: 16px; }
+  .reset-defaults-btn {
+    width: 100%; height: 36px;
+    border: 1px solid rgba(255,255,255,.08);
+    background: none; color: var(--muted);
+    border-radius: 8px; cursor: pointer;
+    font-size: 12px; font-family: inherit;
+    transition: all .15s;
+  }
+  .reset-defaults-btn:hover { border-color: rgba(255,255,255,.2); color: var(--text); }
+</style>
+</head>
+<body>
+
+<!-- ─── Floating controls — always visible, transparent ─── -->
+<div class="float-controls">
+  <button class="float-btn" id="btn-fullscreen" title="Fullscreen">
+    <svg id="fs-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+      <polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/>
+      <line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/>
+    </svg>
+  </button>
+  <button class="float-btn" id="btn-settings" title="Settings">
+    <svg id="settings-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="3"/>
+      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+    </svg>
+  </button>
+  <button class="float-btn" id="btn-quit" title="Close">✕</button>
+</div>
+
+<!-- ─── Rate limit banner ─── -->
+<div class="rate-banner" id="rate-banner">
+  <div>
+    <div class="rl-label">⚠ Rate Limited</div>
+    <div class="rl-sub" id="rl-sub">Resets soon</div>
+  </div>
+  <div class="rl-count" id="rl-count">--:--:--</div>
+</div>
+
+<!-- ─── Main view ─── -->
+<div class="scroll" id="main-view">
+
+  <div class="sec-label spotify" id="spotify-label">
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+      <path d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.66 0 12 0zm5.521 17.34c-.24.359-.66.48-1.021.24-2.82-1.74-6.36-2.101-10.561-1.141-.418.122-.779-.179-.899-.539-.12-.421.18-.78.54-.9 4.56-1.021 8.52-.6 11.64 1.32.42.18.479.659.301 1.02zm1.44-3.3c-.301.42-.841.6-1.262.3-3.239-1.98-8.159-2.58-11.939-1.38-.479.12-1.02-.12-1.14-.6-.12-.48.12-1.021.6-1.141C9.6 9.9 15 10.561 18.72 12.84c.361.181.54.78.241 1.2zm.12-3.36C15.24 8.4 8.82 8.16 5.16 9.301c-.6.179-1.2-.181-1.38-.721-.18-.601.18-1.2.72-1.381 4.26-1.26 11.28-1.02 15.721 1.621.539.3.719 1.02.419 1.56-.299.421-1.02.599-1.559.3z"/>
+    </svg>
+    <span id="spotify-label-text">Spotify</span>
+  </div>
+  <div id="spotify-body">
+    <div class="empty">
+      <svg width="32" height="32" viewBox="0 0 24 24" fill="currentColor">
+        <path d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.66 0 12 0zm5.521 17.34c-.24.359-.66.48-1.021.24-2.82-1.74-6.36-2.101-10.561-1.141-.418.122-.779-.179-.899-.539-.12-.421.18-.78.54-.9 4.56-1.021 8.52-.6 11.64 1.32.42.18.479.659.301 1.02zm1.44-3.3c-.301.42-.841.6-1.262.3-3.239-1.98-8.159-2.58-11.939-1.38-.479.12-1.02-.12-1.14-.6-.12-.48.12-1.021.6-1.141C9.6 9.9 15 10.561 18.72 12.84c.361.181.54.78.241 1.2zm.12-3.36C15.24 8.4 8.82 8.16 5.16 9.301c-.6.179-1.2-.181-1.38-.721-.18-.601.18-1.2.72-1.381 4.26-1.26 11.28-1.02 15.721 1.621.539.3.719 1.02.419 1.56-.299.421-1.02.599-1.559.3z"/>
+      </svg>
+      <span>Loading…</span>
+    </div>
+  </div>
+
+  <div class="divider"></div>
+
+  <div class="sec-label claude">
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+      <polygon points="12 2 22 8.5 22 15.5 12 22 2 15.5 2 8.5 12 2"/>
+      <line x1="12" y1="22" x2="12" y2="15.5"/>
+      <polyline points="22 8.5 12 15.5 2 8.5"/>
+    </svg>
+    Claude Code
+  </div>
+
+  <div class="stats-row">
+    <div class="stat"><div class="stat-val" id="stat-today">—</div><div class="stat-lbl">Prompts today</div></div>
+    <div class="stat"><div class="stat-val" id="stat-sessions">—</div><div class="stat-lbl">Sessions today</div></div>
+  </div>
+
+  <div class="token-block">
+    <div class="token-row">
+      <span class="token-lbl">Output tokens</span>
+      <div class="token-vals">
+        <span><span class="tv" id="tok-out-today">—</span><span class="tp"> today</span></span>
+        <span><span class="tv dim" id="tok-out-week">—</span><span class="tp"> week</span></span>
+      </div>
+    </div>
+    <div class="token-row">
+      <span class="token-lbl">Cache context</span>
+      <div class="token-vals">
+        <span><span class="tv dim" id="tok-cr-today">—</span><span class="tp"> today</span></span>
+        <span><span class="tv dim" id="tok-cr-week">—</span><span class="tp"> week</span></span>
+      </div>
+    </div>
+  </div>
+
+  <div class="week-row">
+    <span class="week-val" id="week-val">—</span>
+    <span class="week-lbl">prompts this week</span>
+    <span class="week-rng" id="week-rng"></span>
+  </div>
+  <div class="reset-row">
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+    </svg>
+    <span id="reset-text">Loading…</span>
+  </div>
+
+</div>
+
+<!-- ═══════════════════════════════════════
+     SETTINGS PANEL
+═══════════════════════════════════════ -->
+<div class="settings-view" id="settings-view">
+
+  <div class="settings-section">Colours</div>
+
+  <div class="setting-row">
+    <span class="setting-name">Background<br><span style="font-size:10px;color:var(--muted)">overlay opacity →</span></span>
+    <div class="color-control">
+      <input type="color" id="s-bg" value="#000000">
+      <div class="hex-stack">
+        <input type="text" class="hex-input" id="sh-bg" value="#000000" maxlength="7">
+        <div class="alpha-row">
+          <input type="range" class="alpha-slider" id="sa-bg" min="0" max="100" value="72">
+          <span class="alpha-val" id="sav-bg">72%</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="setting-row">
+    <span class="setting-name">Card background</span>
+    <div class="color-control">
+      <input type="color" id="s-card" value="#1c1c1e">
+      <div class="hex-stack">
+        <input type="text" class="hex-input" id="sh-card" value="#1c1c1e" maxlength="7">
+        <div class="alpha-row">
+          <input type="range" class="alpha-slider" id="sa-card" min="0" max="100" value="100">
+          <span class="alpha-val" id="sav-card">100%</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="setting-row">
+    <span class="setting-name">Text</span>
+    <div class="color-control">
+      <input type="color" id="s-text" value="#ffffff">
+      <div class="hex-stack">
+        <input type="text" class="hex-input" id="sh-text" value="#ffffff" maxlength="7">
+        <div class="alpha-row">
+          <input type="range" class="alpha-slider" id="sa-text" min="0" max="100" value="100">
+          <span class="alpha-val" id="sav-text">100%</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="setting-row">
+    <span class="setting-name">Muted text</span>
+    <div class="color-control">
+      <input type="color" id="s-muted" value="#636366">
+      <div class="hex-stack">
+        <input type="text" class="hex-input" id="sh-muted" value="#636366" maxlength="7">
+        <div class="alpha-row">
+          <input type="range" class="alpha-slider" id="sa-muted" min="0" max="100" value="100">
+          <span class="alpha-val" id="sav-muted">100%</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="setting-row">
+    <span class="setting-name">Spotify accent</span>
+    <div class="color-control">
+      <input type="color" id="s-green" value="#1db954">
+      <div class="hex-stack">
+        <input type="text" class="hex-input" id="sh-green" value="#1db954" maxlength="7">
+        <div class="alpha-row">
+          <input type="range" class="alpha-slider" id="sa-green" min="0" max="100" value="100">
+          <span class="alpha-val" id="sav-green">100%</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="setting-row">
+    <span class="setting-name">Claude accent</span>
+    <div class="color-control">
+      <input type="color" id="s-purple" value="#bf5af2">
+      <div class="hex-stack">
+        <input type="text" class="hex-input" id="sh-purple" value="#bf5af2" maxlength="7">
+        <div class="alpha-row">
+          <input type="range" class="alpha-slider" id="sa-purple" min="0" max="100" value="100">
+          <span class="alpha-val" id="sav-purple">100%</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="setting-row">
+    <span class="setting-name">Reset card</span>
+    <div class="color-control">
+      <input type="color" id="s-reset" value="#bf5af2">
+      <div class="hex-stack">
+        <input type="text" class="hex-input" id="sh-reset" value="#bf5af2" maxlength="7">
+        <div class="alpha-row">
+          <input type="range" class="alpha-slider" id="sa-reset" min="0" max="100" value="100">
+          <span class="alpha-val" id="sav-reset">100%</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="settings-section" style="margin-top:8px">Background image</div>
+
+  <div class="image-row">
+    <div class="img-preview" id="img-preview">
+      <span id="img-placeholder">No image set</span>
+    </div>
+    <div class="img-buttons">
+      <button class="img-btn" id="btn-pick-img">Choose image…</button>
+      <button class="img-btn danger" id="btn-clear-img">Remove</button>
+    </div>
+  </div>
+
+  <div class="settings-section" style="margin-top:8px">Spotify Queue</div>
+
+  <div class="sp-client-row">
+    <div class="sp-client-label">Client ID</div>
+    <input type="text" class="sp-client-input" id="sp-client-id" placeholder="Paste your Spotify Client ID…" spellcheck="false" autocomplete="off">
+    <div class="sp-client-hint">
+      Create a free app at <b>developer.spotify.com</b> → copy the Client ID above →
+      add <b>http://127.0.0.1:8888/callback</b> as a Redirect URI in the app settings.
+    </div>
+  </div>
+
+  <div class="sp-connect-row">
+    <div class="sp-connect-info">
+      <div class="sp-connect-label">Spotify account</div>
+      <div class="sp-connect-status" id="sp-connect-status">Not connected</div>
+    </div>
+    <button class="sp-connect-btn" id="sp-connect-btn">Connect</button>
+  </div>
+
+  <div class="settings-footer">
+    <button class="reset-defaults-btn" id="btn-reset">Reset to defaults</button>
+  </div>
+
+</div>
+
+<script>
+  // ─── defaults ───────────────────────────────────────────
+  const DEFAULTS = {
+    bg: '#000000',  bgAlpha:     0.72,
+    card: '#1c1c1e', cardAlpha:  1.0,
+    text: '#ffffff',  textAlpha:  1.0,
+    muted: '#636366', mutedAlpha: 1.0,
+    green: '#1db954', greenAlpha: 1.0,
+    purple: '#bf5af2', purpleAlpha: 1.0,
+    resetColor: '#bf5af2', resetColorAlpha: 1.0,
+    bgImage: null,
+  }
+
+  function hexToRgba(hex, alpha) {
+    if (alpha == null || alpha >= 1) return hex
+    const r = parseInt(hex.slice(1,3), 16)
+    const g = parseInt(hex.slice(3,5), 16)
+    const b = parseInt(hex.slice(5,7), 16)
+    return `rgba(${r},${g},${b},${alpha.toFixed(2)})`
+  }
+
+  let currentSettings = { ...DEFAULTS }
+  let settingsOpen = false
+
+  // ─── apply settings to CSS vars + body bg ──────────────
+  function derivedRgba(hex, alpha) {
+    const r = parseInt(hex.slice(1,3), 16)
+    const g = parseInt(hex.slice(3,5), 16)
+    const b = parseInt(hex.slice(5,7), 16)
+    return `rgba(${r},${g},${b},${alpha})`
+  }
+
+  function applySettings(s) {
+    const root = document.documentElement
+    // --bg stays solid (used by ::before overlay); opacity controlled via --bg-alpha
+    root.style.setProperty('--bg',       s.bg     || DEFAULTS.bg)
+    root.style.setProperty('--bg-alpha', s.bgAlpha     ?? DEFAULTS.bgAlpha)
+    root.style.setProperty('--card',     hexToRgba(s.card   || DEFAULTS.card,   s.cardAlpha   ?? DEFAULTS.cardAlpha))
+    root.style.setProperty('--text',     hexToRgba(s.text   || DEFAULTS.text,   s.textAlpha   ?? DEFAULTS.textAlpha))
+    root.style.setProperty('--muted',    hexToRgba(s.muted  || DEFAULTS.muted,  s.mutedAlpha  ?? DEFAULTS.mutedAlpha))
+    root.style.setProperty('--green',    hexToRgba(s.green  || DEFAULTS.green,  s.greenAlpha  ?? DEFAULTS.greenAlpha))
+    root.style.setProperty('--purple',   hexToRgba(s.purple || DEFAULTS.purple, s.purpleAlpha ?? DEFAULTS.purpleAlpha))
+
+    // derived purple tints for dim token values
+    const purpleHex = s.purple || DEFAULTS.purple
+    root.style.setProperty('--purple-dim',    derivedRgba(purpleHex, 0.4))
+
+    // reset card — independent colour, tints auto-derived
+    const resetHex = s.resetColor || DEFAULTS.resetColor
+    root.style.setProperty('--reset-tint',   derivedRgba(resetHex, 0.08))
+    root.style.setProperty('--reset-border', derivedRgba(resetHex, 0.18))
+    root.style.setProperty('--reset-text',   derivedRgba(resetHex, 0.8))
+
+    if (s.bgImage) {
+      document.body.style.backgroundImage = `url('./${s.bgImage}?t=${Date.now()}')`
+      document.body.classList.add('has-bg')
+    } else {
+      document.body.style.backgroundImage = 'none'
+      document.body.classList.remove('has-bg')
+    }
+  }
+
+  // ─── sync picker ↔ hex input ↔ alpha slider ────────────
+  function wirePair(pickId, hexId, alphaId, alphaValId, colorKey, alphaKey) {
+    const pick     = document.getElementById(pickId)
+    const hex      = document.getElementById(hexId)
+    const alpha    = document.getElementById(alphaId)
+    const alphaVal = document.getElementById(alphaValId)
+
+    pick.addEventListener('input', () => {
+      hex.value = pick.value
+      currentSettings[colorKey] = pick.value
+      applySettings(currentSettings)
+      saveDebounced()
+    })
+    hex.addEventListener('input', () => {
+      const v = hex.value.trim()
+      if (/^#[0-9a-fA-F]{6}$/.test(v)) {
+        pick.value = v
+        currentSettings[colorKey] = v
+        applySettings(currentSettings)
+        saveDebounced()
+      }
+    })
+    hex.addEventListener('blur', () => {
+      if (!/^#[0-9a-fA-F]{6}$/.test(hex.value.trim())) hex.value = pick.value
+    })
+    alpha.addEventListener('input', () => {
+      const pct = parseInt(alpha.value)
+      alphaVal.textContent = pct + '%'
+      currentSettings[alphaKey] = pct / 100
+      applySettings(currentSettings)
+      saveDebounced()
+    })
+  }
+
+  // ─── populate settings fields from currentSettings ─────
+  function populateFields(s) {
+    const pairs = [
+      ['s-bg','sh-bg','sa-bg','sav-bg','bg','bgAlpha'],
+      ['s-card','sh-card','sa-card','sav-card','card','cardAlpha'],
+      ['s-text','sh-text','sa-text','sav-text','text','textAlpha'],
+      ['s-muted','sh-muted','sa-muted','sav-muted','muted','mutedAlpha'],
+      ['s-green','sh-green','sa-green','sav-green','green','greenAlpha'],
+      ['s-purple','sh-purple','sa-purple','sav-purple','purple','purpleAlpha'],
+      ['s-reset','sh-reset','sa-reset','sav-reset','resetColor','resetColorAlpha'],
+    ]
+    for (const [pid, hid, aid, avid, ckey, akey] of pairs) {
+      const col = s[ckey] || DEFAULTS[ckey]
+      const pct = Math.round((s[akey] ?? DEFAULTS[akey]) * 100)
+      document.getElementById(pid).value  = col
+      document.getElementById(hid).value  = col
+      document.getElementById(aid).value  = pct
+      document.getElementById(avid).textContent = pct + '%'
+    }
+    updateImagePreview(s.bgImage)
+  }
+
+  function updateImagePreview(filename) {
+    const preview = document.getElementById('img-preview')
+    const placeholder = document.getElementById('img-placeholder')
+    if (filename) {
+      const src = `./${filename}?t=${Date.now()}`
+      preview.innerHTML = `<img src="${src}" alt="Background preview">`
+    } else {
+      preview.innerHTML = '<span id="img-placeholder">No image set</span>'
+    }
+  }
+
+  // ─── debounced save ─────────────────────────────────────
+  let saveTimer = null
+  function saveDebounced() {
+    clearTimeout(saveTimer)
+    saveTimer = setTimeout(() => window.api.saveSettings(currentSettings), 500)
+  }
+
+  // ─── settings toggle ────────────────────────────────────
+  function updateSpotifyUI(s) {
+    const btn    = document.getElementById('sp-connect-btn')
+    const status = document.getElementById('sp-connect-status')
+    const input  = document.getElementById('sp-client-id')
+    if (!btn) return
+    input.value = s.spotifyClientId || ''
+    if (s.spotifyRefreshToken) {
+      status.textContent = 'Connected'; status.style.color = 'var(--green)'
+      btn.textContent = 'Disconnect'; btn.className = 'sp-connect-btn connected'
+    } else {
+      status.textContent = 'Not connected'; status.style.color = ''
+      btn.textContent = 'Connect'; btn.className = 'sp-connect-btn'
+    }
+  }
+
+  function openSettings() {
+    settingsOpen = true
+    document.getElementById('settings-view').classList.add('open')
+    populateFields(currentSettings)
+    updateSpotifyUI(currentSettings)
+  }
+
+  function closeSettings() {
+    settingsOpen = false
+    document.getElementById('settings-view').classList.remove('open')
+  }
+
+  document.getElementById('btn-settings').addEventListener('click', () => {
+    settingsOpen ? closeSettings() : openSettings()
+  })
+
+  // ─── image pick / clear ─────────────────────────────────
+  document.getElementById('btn-pick-img').addEventListener('click', async () => {
+    const filename = await window.api.pickImage()
+    if (filename) {
+      currentSettings.bgImage = filename
+      applySettings(currentSettings)
+      updateImagePreview(filename)
+      await window.api.saveSettings(currentSettings)
+    }
+  })
+
+  document.getElementById('btn-clear-img').addEventListener('click', async () => {
+    currentSettings.bgImage = null
+    applySettings(currentSettings)
+    updateImagePreview(null)
+    await window.api.clearImage()
+    await window.api.saveSettings(currentSettings)
+  })
+
+  // ─── reset defaults ─────────────────────────────────────
+  document.getElementById('btn-reset').addEventListener('click', async () => {
+    currentSettings = { ...DEFAULTS, bgImage: null }
+    applySettings(currentSettings)
+    populateFields(currentSettings)
+    await window.api.clearImage()
+    await window.api.saveSettings(currentSettings)
+  })
+
+  // ─── wire all color pairs (picker, hex, alpha slider, alpha label, colorKey, alphaKey)
+  wirePair('s-bg',    'sh-bg',    'sa-bg',    'sav-bg',    'bg',         'bgAlpha')
+  wirePair('s-card',  'sh-card',  'sa-card',  'sav-card',  'card',       'cardAlpha')
+  wirePair('s-text',  'sh-text',  'sa-text',  'sav-text',  'text',       'textAlpha')
+  wirePair('s-muted', 'sh-muted', 'sa-muted', 'sav-muted', 'muted',      'mutedAlpha')
+  wirePair('s-green', 'sh-green', 'sa-green', 'sav-green', 'green',      'greenAlpha')
+  wirePair('s-purple','sh-purple','sa-purple','sav-purple', 'purple',     'purpleAlpha')
+  wirePair('s-reset', 'sh-reset', 'sa-reset', 'sav-reset', 'resetColor', 'resetColorAlpha')
+
+  // ─── Spotify settings ───────────────────────────────────
+  document.getElementById('sp-client-id').addEventListener('input', e => {
+    currentSettings.spotifyClientId = e.target.value.trim()
+    saveDebounced()
+  })
+
+  document.getElementById('sp-connect-btn').addEventListener('click', async () => {
+    const btn    = document.getElementById('sp-connect-btn')
+    const status = document.getElementById('sp-connect-status')
+    if (currentSettings.spotifyRefreshToken) {
+      await window.api.spotifyDisconnect()
+      delete currentSettings.spotifyRefreshToken
+      delete currentSettings.spotifyAccessToken
+      delete currentSettings.spotifyTokenExpiry
+      queueData = null
+      updateSpotifyUI(currentSettings)
+    } else {
+      btn.textContent = 'Connecting…'; btn.disabled = true
+      status.textContent = 'Opening browser…'; status.style.color = ''
+      const result = await window.api.spotifyConnect()
+      btn.disabled = false
+      if (result.ok) {
+        currentSettings = await window.api.getSettings()
+        updateSpotifyUI(currentSettings)
+      } else {
+        status.textContent = result.error || 'Failed'; status.style.color = 'var(--red)'
+        btn.textContent = 'Connect'; btn.className = 'sp-connect-btn'
+      }
+    }
+  })
+
+  // ─── fullscreen toggle ───────────────────────────────────
+  const ICON_EXPAND = `<svg id="fs-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>`
+  const ICON_SHRINK = `<svg id="fs-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="10" y1="14" x2="3" y2="21"/><line x1="21" y1="3" x2="14" y2="10"/></svg>`
+
+  document.getElementById('btn-fullscreen').addEventListener('click', () => {
+    window.api.toggleFullscreen()
+  })
+
+  window.api.onFullscreenChange(isFS => {
+    document.getElementById('btn-fullscreen').innerHTML = isFS ? ICON_SHRINK : ICON_EXPAND
+    document.getElementById('btn-fullscreen').title = isFS ? 'Exit fullscreen' : 'Fullscreen'
+  })
+
+  // ─── close / quit ────────────────────────────────────────
+  document.getElementById('btn-quit').addEventListener('click', () => window.api.quit())
+
+  // ════════════════════════════════════════════════════════
+  //  SPOTIFY
+  // ════════════════════════════════════════════════════════
+  let tickTimer = null, tickPos = 0, tickDur = 0, tickPlaying = false
+
+  const startTick = (pos, dur) => {
+    clearInterval(tickTimer)
+    tickPos = pos; tickDur = dur; tickPlaying = true
+    tickTimer = setInterval(() => {
+      if (!tickPlaying) return
+      tickPos++
+      const fill = document.getElementById('pf')
+      const pt   = document.getElementById('pt')
+      if (fill && tickDur > 0) fill.style.width = Math.min(tickPos / tickDur * 100, 100) + '%'
+      if (pt) pt.textContent = fmt(tickPos)
+    }, 1000)
+  }
+  const stopTick = () => { clearInterval(tickTimer); tickPlaying = false }
+
+  const esc = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')
+  const fmt = s => { const m=Math.floor(s/60),sec=Math.floor(s%60); return `${m}:${String(sec).padStart(2,'0')}` }
+  const fmtT = n => {
+    if (!n) return '0'
+    if (n >= 1e6) return (n/1e6).toFixed(1).replace(/\.0$/,'')+'M'
+    if (n >= 1e3) return Math.round(n/1e3)+'K'
+    return String(n)
+  }
+  const fmtCD = s => {
+    if (s<=0) return '00:00:00'
+    const h=Math.floor(s/3600), m=Math.floor((s%3600)/60), sec=Math.floor(s%60)
+    return [h,m,sec].map(v=>String(v).padStart(2,'0')).join(':')
+  }
+
+  const SPOT_LOGO = `<svg width="32" height="32" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.66 0 12 0zm5.521 17.34c-.24.359-.66.48-1.021.24-2.82-1.74-6.36-2.101-10.561-1.141-.418.122-.779-.179-.899-.539-.12-.421.18-.78.54-.9 4.56-1.021 8.52-.6 11.64 1.32.42.18.479.659.301 1.02zm1.44-3.3c-.301.42-.841.6-1.262.3-3.239-1.98-8.159-2.58-11.939-1.38-.479.12-1.02-.12-1.14-.6-.12-.48.12-1.021.6-1.141C9.6 9.9 15 10.561 18.72 12.84c.361.181.54.78.241 1.2zm.12-3.36C15.24 8.4 8.82 8.16 5.16 9.301c-.6.179-1.2-.181-1.38-.721-.18-.601.18-1.2.72-1.381 4.26-1.26 11.28-1.02 15.721 1.621.539.3.719 1.02.419 1.56-.299.421-1.02.599-1.559.3z"/></svg>`
+
+  let activeSpTab    = 'recent'
+  let lastSpotifyData = null
+  let queueData       = null   // null = never fetched, object = result
+
+  function trackList(tracks, emptyMsg) {
+    if (!tracks?.length) return `<div class="sp-empty-msg">${emptyMsg}</div>`
+    return tracks.slice(0, 8).map((t, i) => `
+      <div class="recent-item">
+        <span class="recent-num">${i + 1}</span>
+        <div class="recent-info">
+          <div class="recent-name">${esc(t.name)}</div>
+          <div class="recent-artist">${esc(t.artist)}</div>
+        </div>
+      </div>`).join('')
+  }
+
+  function queueContent() {
+    if (!queueData)                      return `<div class="sp-empty-msg">Loading…</div>`
+    if (queueData.error === 'no_token')  return `<div class="sp-empty-msg">Connect Spotify in Settings to see the queue</div>`
+    if (queueData.error)                 return `<div class="sp-empty-msg">${esc(queueData.error)}</div>`
+    return trackList(queueData.queue, 'Queue is empty')
+  }
+
+  function renderSpotify(d) {
+    lastSpotifyData = d
+    const body  = document.getElementById('spotify-body')
+    const ltext = document.getElementById('spotify-label-text')
+    const lel   = document.getElementById('spotify-label')
+    const old   = lel.querySelector('.live-dot')
+    if (old) old.remove()
+
+    if (!d || d.state === 'not_running' || d.state === 'stopped' || d.state === 'error') {
+      stopTick(); ltext.textContent = 'Spotify'
+      body.innerHTML = `<div class="empty">${SPOT_LOGO}<span>${d?.state==='not_running'?'Spotify not open':'Nothing playing'}</span></div>`
+      return
+    }
+    if (d.state === 'playing') {
+      const dot = document.createElement('span')
+      dot.className = 'live-dot'; lel.insertBefore(dot, ltext)
+    }
+    ltext.textContent = d.state === 'playing' ? 'Now Playing' : 'Paused'
+
+    const pct = d.duration > 0 ? (d.position / d.duration * 100).toFixed(2) : 0
+    const isP = d.state === 'playing'
+    const playIcon = isP
+      ? `<svg width="26" height="26" viewBox="0 0 24 24" fill="white"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>`
+      : `<svg width="26" height="26" viewBox="0 0 24 24" fill="white"><polygon points="5 3 19 12 5 21 5 3"/></svg>`
+
+    const recentTabContent = trackList(
+      d.recent?.slice(0, 4).map(t => ({ name: t.name, artist: t.artist })),
+      'Play some tracks and they will appear here'
+    )
+
+    body.innerHTML = `
+      <div class="sp-layout">
+        <div class="sp-left">
+          <div class="np-card">
+            <div class="np-art">
+              ${d.artUrl?`<img src="${esc(d.artUrl)}" alt="" onerror="this.style.display='none'">`:''}
+              <div class="np-art-ph">♫</div>
+            </div>
+            <div class="np-meta">
+              <div class="np-name">${esc(d.name)}</div>
+              <div class="np-artist">${esc(d.artist)}</div>
+            </div>
+          </div>
+          <div class="progress-wrap">
+            <div class="progress-track"><div class="progress-fill" id="pf" style="width:${pct}%"></div></div>
+            <div class="progress-times"><span id="pt">${fmt(d.position)}</span><span>${fmt(d.duration)}</span></div>
+          </div>
+          <div class="controls">
+            <button class="ctrl" id="btn-prev">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><polygon points="19 20 9 12 19 4 19 20"/><rect x="5" y="4" width="3" height="16" rx="1"/></svg>
+            </button>
+            <button class="ctrl play" id="btn-play">${playIcon}</button>
+            <button class="ctrl" id="btn-next">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 4 15 12 5 20 5 4"/><rect x="16" y="4" width="3" height="16" rx="1"/></svg>
+            </button>
+          </div>
+        </div>
+        <div class="sp-right">
+          <div class="sp-tabs">
+            <button class="sp-tab ${activeSpTab==='recent'?'active':''}" id="tab-recent">Recent</button>
+            <button class="sp-tab ${activeSpTab==='queue'?'active':''}" id="tab-queue">Queue</button>
+          </div>
+          <div class="sp-tab-body">
+            <div id="sp-recent-pane" ${activeSpTab!=='recent'?'hidden':''}>${recentTabContent}</div>
+            <div id="sp-queue-pane"  ${activeSpTab!=='queue' ?'hidden':''}>${queueContent()}</div>
+          </div>
+        </div>
+      </div>`
+
+    document.getElementById('btn-prev').addEventListener('click', () => window.api.spotifyControl('prev'))
+    document.getElementById('btn-next').addEventListener('click', () => window.api.spotifyControl('next'))
+    document.getElementById('btn-play').addEventListener('click', () => window.api.spotifyControl('playpause'))
+
+    document.getElementById('tab-recent').addEventListener('click', () => {
+      if (activeSpTab === 'recent') return
+      activeSpTab = 'recent'
+      renderSpotify(lastSpotifyData)
+    })
+    document.getElementById('tab-queue').addEventListener('click', async () => {
+      if (activeSpTab === 'queue') return
+      activeSpTab = 'queue'
+      queueData = null
+      renderSpotify(lastSpotifyData)
+      queueData = await window.api.getSpotifyQueue()
+      renderSpotify(lastSpotifyData)
+    })
+
+    if (isP) startTick(d.position, d.duration); else stopTick()
+  }
+
+  // ════════════════════════════════════════════════════════
+  //  CLAUDE
+  // ════════════════════════════════════════════════════════
+  function renderClaude(d) {
+    document.getElementById('stat-today').textContent    = d.promptsToday ?? '—'
+    document.getElementById('stat-sessions').textContent = d.sessionsToday ?? '—'
+    document.getElementById('week-val').textContent      = d.promptsWeek  ?? '—'
+    document.getElementById('week-rng').textContent      = d.weekStartLabel ? `${d.weekStartLabel} – today` : ''
+    const t = d.tokens || { today:{}, week:{} }
+    document.getElementById('tok-out-today').textContent = fmtT(t.today?.out)
+    document.getElementById('tok-out-week').textContent  = fmtT(t.week?.out)
+    document.getElementById('tok-cr-today').textContent  = fmtT(t.today?.cacheRead)
+    document.getElementById('tok-cr-week').textContent   = fmtT(t.week?.cacheRead)
+    const days = d.daysUntilReset ?? 0
+    const dLabel = days === 0 ? 'today' : days === 1 ? 'tomorrow' : `in ${days} days`
+    document.getElementById('reset-text').textContent = `Resets ${d.resetLabel ?? '—'} · ${dLabel}`
+  }
+
+  // ════════════════════════════════════════════════════════
+  //  RATE LIMIT
+  // ════════════════════════════════════════════════════════
+  let rlResetAt = null, rlTimer = null
+
+  function startRlCountdown(resetAt) {
+    rlResetAt = new Date(resetAt)
+    const banner = document.getElementById('rate-banner')
+    const count  = document.getElementById('rl-count')
+    const sub    = document.getElementById('rl-sub')
+    banner.classList.add('visible')
+    sub.textContent = `Resets at ${rlResetAt.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'})}`
+    clearInterval(rlTimer)
+    rlTimer = setInterval(() => {
+      const s = Math.max(0, Math.floor((rlResetAt - Date.now()) / 1000))
+      count.textContent = fmtCD(s)
+      if (s === 0) { clearInterval(rlTimer); banner.classList.remove('visible'); rlResetAt = null }
+    }, 1000)
+    count.textContent = fmtCD(Math.max(0, Math.floor((rlResetAt - Date.now()) / 1000)))
+  }
+
+  function renderRateLimit(d) {
+    if (d.limited && d.resetAt) {
+      if (!rlResetAt || rlResetAt.toISOString() !== d.resetAt) startRlCountdown(d.resetAt)
+    } else {
+      clearInterval(rlTimer)
+      document.getElementById('rate-banner').classList.remove('visible')
+      rlResetAt = null
+    }
+  }
+
+  // ════════════════════════════════════════════════════════
+  //  INIT + POLLING
+  // ════════════════════════════════════════════════════════
+  async function init() {
+    const saved = await window.api.getSettings()
+    currentSettings = { ...DEFAULTS, ...saved }
+    applySettings(currentSettings)
+  }
+
+  async function pollSpotify()   { try { renderSpotify(await window.api.getSpotify()) } catch {} }
+  async function pollClaude()    { try { renderClaude(await window.api.getClaude())   } catch {} }
+  async function pollRateLimit() { try { renderRateLimit(await window.api.getRateLimit()) } catch {} }
+
+  init().then(() => {
+    pollSpotify(); pollClaude(); pollRateLimit()
+    setInterval(pollSpotify,   3000)
+    setInterval(pollClaude,   30000)
+    setInterval(pollRateLimit,  5000)
+  })
+</script>
+</body>
+</html>
